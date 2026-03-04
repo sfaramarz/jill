@@ -15,11 +15,12 @@ from connectors.obsidian import ObsidianConnector
 from connectors.github import GitHubConnector
 from connectors.gitlab import GitLabConnector
 from connectors.slack import SlackConnector
+from connectors.outlook import OutlookConnector
 
 MODEL = "claude-sonnet-4-6"
 
 SYSTEM_PROMPT = """You are Jill, a personal AI assistant for a TPM/Producer at NVIDIA. \
-You have access to data from six sources:
+You have access to data from seven sources:
 
 1. **Jira** — project management tickets, issues, sprints, and activity
 2. **Confluence** — team wiki pages, documentation, and meeting notes
@@ -27,6 +28,7 @@ You have access to data from six sources:
 4. **GitHub** — pull requests, review requests, and issues across repos
 5. **GitLab** — merge requests, review assignments, and issues
 6. **Slack** — channel messages, direct messages, and mentions
+7. **Outlook** — email inbox, unread messages, and email search
 
 You can also write back to these sources: create Jira issues/comments, transition tickets, \
 create/update Confluence pages, write Obsidian notes, and generate structured documents.
@@ -42,6 +44,7 @@ Guidelines:
 - When referencing a GitHub PR/issue, include the repo, number, and URL.
 - When referencing a GitLab MR/issue, include the project, iid, and URL.
 - When referencing a Slack message, include the channel name, user, and timestamp.
+- When referencing an Outlook email, include the subject, sender, and received date.
 - If data is missing or a source returned no results, say so explicitly rather than making things up.
 - Cross-reference across sources when relevant.
 - Today's date context may be provided — use it when reasoning about deadlines and recency.
@@ -118,6 +121,7 @@ class Assistant:
         self.github: GitHubConnector | None = None
         self.gitlab: GitLabConnector | None = None
         self.slack: SlackConnector | None = None
+        self.outlook: OutlookConnector | None = None
 
         if config.jira_enabled:
             self.jira = JiraConnector(
@@ -152,6 +156,11 @@ class Assistant:
                 token=config.slack_token,
                 channel_ids=config.slack_channel_ids,
             )
+        if config.outlook_enabled:
+            self.outlook = OutlookConnector(
+                tenant_id=config.outlook_tenant_id,
+                client_id=config.outlook_client_id,
+            )
 
     # -------------------------------------------------------------------------
     # Public command handlers
@@ -174,7 +183,8 @@ class Assistant:
             "4. **GitHub** — open PRs you authored and PRs awaiting your review\n"
             "5. **GitLab** — open MRs you authored and MRs awaiting your review\n"
             "6. **Slack** — recent mentions and important channel messages\n"
-            "7. **Key Action Items** — what should the user focus on today?\n\n"
+            "7. **Outlook Emails** — unread email count and most important messages\n"
+            "8. **Key Action Items** — what should the user focus on today?\n\n"
             f"{context}"
         )
         self._stream_response(prompt)
@@ -184,12 +194,34 @@ class Assistant:
         context = self._gather_search_context(topic)
         prompt = (
             f"The user wants to cross-reference everything related to: **{topic}**\n\n"
-            "Synthesize findings from Jira, Confluence, Obsidian, GitHub, and GitLab "
-            "into a unified summary. Group results by source, then highlight any "
-            "connections or overlaps between sources.\n\n"
+            "Synthesize findings from Jira, Confluence, Obsidian, GitHub, GitLab, "
+            "Slack, and Outlook into a unified summary. Group results by source, then "
+            "highlight any connections or overlaps between sources.\n\n"
             f"{context}"
         )
         self._stream_response(prompt)
+
+    def emails(self, unread_only: bool = False, search_query: str = "") -> None:
+        """Display recent or unread emails, or search emails."""
+        if not self.outlook:
+            print("Error: Outlook is not configured. Set OUTLOOK_TENANT_ID and OUTLOOK_CLIENT_ID in .env.")
+            return
+        try:
+            if search_query:
+                print(f"Searching emails for: {search_query}\n")
+                emails = self.outlook.search_emails(search_query, count=10)
+                label = f"Emails matching '{search_query}'"
+            elif unread_only:
+                print("Fetching unread emails...\n")
+                emails = self.outlook.get_unread_emails(count=10)
+                label = "Unread Emails"
+            else:
+                print("Fetching recent emails...\n")
+                emails = self.outlook.get_recent_emails(count=10)
+                label = "Recent Emails"
+            print(self._format_emails(emails, label=label))
+        except Exception as e:
+            print(f"Error fetching emails: {e}")
 
     def weekly_report(self) -> None:
         """Generate a weekly status report and save it as an Obsidian note."""
@@ -679,6 +711,8 @@ class Assistant:
             sections.append(self._fetch_gitlab_context(query=question))
         if self.slack:
             sections.append(self._fetch_slack_context(query=question))
+        if self.outlook:
+            sections.append(self._fetch_outlook_context(query=question))
         if not sections:
             return "No data sources are configured."
         return "\n\n".join(sections)
@@ -700,6 +734,8 @@ class Assistant:
             sections.append(self._fetch_gitlab_briefing_context())
         if self.slack:
             sections.append(self._fetch_slack_briefing_context())
+        if self.outlook:
+            sections.append(self._fetch_outlook_briefing_context())
         if not sections:
             return "No data sources are configured."
         return "\n\n".join(sections)
@@ -839,6 +875,22 @@ class Assistant:
         except Exception as e:
             return f"[Slack] Error fetching data: {e}"
 
+    def _fetch_outlook_context(self, query: str) -> str:
+        try:
+            emails = self.outlook.search_emails(query, count=10)  # type: ignore[union-attr]
+            return self._format_emails(emails, label=f"Outlook emails matching '{query}'")
+        except Exception as e:
+            return f"[Outlook] Error fetching emails: {e}"
+
+    def _fetch_outlook_briefing_context(self) -> str:
+        parts: list[str] = []
+        try:
+            unread = self.outlook.get_unread_emails(count=10)  # type: ignore[union-attr]
+            parts.append(self._format_emails(unread, label="Unread Outlook Emails"))
+        except Exception as e:
+            parts.append(f"[Outlook] Error fetching unread emails: {e}")
+        return "\n\n".join(parts) if parts else "[Outlook] No data available."
+
     def _fetch_slack_briefing_context(self) -> str:
         parts: list[str] = []
         # Mentions (user token only)
@@ -935,6 +987,22 @@ class Assistant:
                 f"- **{msg.get('user', 'unknown')}** {channel_str} @ {msg.get('timestamp', '')}\n"
                 f"  {msg.get('text', '')}\n"
                 + (f"  Link: {permalink}\n" if permalink else "")
+            )
+        return "\n".join(lines)
+
+    def _format_emails(self, emails: list[dict], label: str = "Outlook Emails") -> str:
+        if not emails:
+            return f"[Outlook] {label}: No emails found."
+        lines = [f"## {label} ({len(emails)} emails)\n"]
+        for email in emails:
+            received = (email.get("received") or "")[:10]
+            read_flag = "" if email.get("is_read") else " [UNREAD]"
+            sender = email.get("from_name") or email.get("from_email", "unknown")
+            preview = email.get("preview", "")
+            lines.append(
+                f"- **{email.get('subject', '(no subject)')}**{read_flag}\n"
+                f"  From: {sender} <{email.get('from_email', '')}> | Received: {received}\n"
+                + (f"  Preview: {preview[:300]}\n" if preview else "")
             )
         return "\n".join(lines)
 

@@ -68,6 +68,25 @@ def search(ctx, topic):
     assistant.search(topic)
 
 
+@cli.command()
+@click.option("--unread", is_flag=True, default=False, help="Show unread emails only.")
+@click.option("--search", "query", default="", metavar="QUERY", help="Search emails by keyword.")
+@click.pass_context
+def emails(ctx, unread, query):
+    """Show recent Outlook emails, unread emails, or search your inbox.
+
+    Examples:
+
+      jill emails
+
+      jill emails --unread
+
+      jill emails --search "budget review"
+    """
+    assistant: Assistant = ctx.obj["assistant"]
+    assistant.emails(unread_only=unread, search_query=query)
+
+
 @cli.command("weekly-report")
 @click.pass_context
 def weekly_report(ctx):

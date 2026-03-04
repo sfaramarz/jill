@@ -39,6 +39,10 @@ class Config:
     # Each entry is either a relative vault path or an obsidian:// URL.
     obsidian_pinned_notes: list = field(default_factory=list)
 
+    # Outlook / Microsoft 365
+    outlook_tenant_id: str = ""
+    outlook_client_id: str = ""
+
     # Derived flags for graceful fallback
     jira_enabled: bool = True
     confluence_enabled: bool = True
@@ -46,6 +50,7 @@ class Config:
     github_enabled: bool = False
     gitlab_enabled: bool = False
     slack_enabled: bool = False
+    outlook_enabled: bool = False
 
 
 def load_config() -> Config:
@@ -121,6 +126,16 @@ def load_config() -> Config:
     slack_channel_raw = os.getenv("SLACK_CHANNEL_IDS", "").strip()
     slack_channel_ids = [c.strip() for c in slack_channel_raw.split(",") if c.strip()]
 
+    # Outlook / Microsoft 365
+    outlook_tenant_id = os.getenv("OUTLOOK_TENANT_ID", "").strip()
+    outlook_client_id = os.getenv("OUTLOOK_CLIENT_ID", "").strip()
+    outlook_enabled = bool(outlook_tenant_id and outlook_client_id)
+    if not outlook_enabled:
+        _warn_missing("Outlook", ["OUTLOOK_TENANT_ID", "OUTLOOK_CLIENT_ID"], {
+            "OUTLOOK_TENANT_ID": outlook_tenant_id,
+            "OUTLOOK_CLIENT_ID": outlook_client_id,
+        })
+
     return Config(
         anthropic_api_key=api_key,
         jira_base_url=jira_url,
@@ -138,12 +153,15 @@ def load_config() -> Config:
         gitlab_token=gitlab_token,
         slack_token=slack_token,
         slack_channel_ids=slack_channel_ids,
+        outlook_tenant_id=outlook_tenant_id,
+        outlook_client_id=outlook_client_id,
         jira_enabled=jira_enabled,
         confluence_enabled=confluence_enabled,
         obsidian_enabled=obsidian_enabled,
         github_enabled=github_enabled,
         gitlab_enabled=gitlab_enabled,
         slack_enabled=slack_enabled,
+        outlook_enabled=outlook_enabled,
     )
 
 
