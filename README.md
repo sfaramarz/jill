@@ -1,6 +1,6 @@
 # Jill — Personal AI Assistant
 
-Jill is a personal AI assistant I built for myself as a TPM/Producer at NVIDIA. It connects to all the tools I use daily — Jira, Confluence, Obsidian, GitHub, GitLab, and Slack — and lets me ask questions, generate briefings, search across everything, and produce TPM documents, all from a single CLI.
+Jill is a personal AI assistant I built for myself as a TPM/Producer at NVIDIA. It connects to all the tools I use daily — Jira, Confluence, Obsidian, GitHub, GitLab, Slack, and NVBugs — and lets me ask questions, generate briefings, search across everything, query bugs, and produce TPM documents, all from a single CLI.
 
 ---
 
@@ -35,6 +35,7 @@ connectors/
   github.py      ← GitHub REST API v3
   gitlab.py      ← GitLab REST API v4
   slack.py       ← Slack Web API
+  nvbugs.py      ← NVBugs search, get, and comment
 server.py        ← MCP server (Claude Desktop integration)
 ```
 
@@ -62,6 +63,7 @@ Every connector is optional. If a credential is missing or a service is unreacha
 | **GitHub** | Your open PRs, PRs awaiting your review, open issues, search |
 | **GitLab** | Your open MRs, MRs awaiting your review, open issues, search |
 | **Slack** | Channel messages, DMs, mentions, message search (user token) |
+| **NVBugs** | Bug search by module/assignee/keyword, get by ID, add comments |
 
 ---
 
@@ -77,6 +79,12 @@ python main.py briefing
 
 # Cross-reference a topic across every source
 python main.py search "FrameView roadmap"
+
+# Query NVBugs (search, get by ID, or ask Jill about bugs)
+python main.py bugs --module NVDRV --assigned-to me
+python main.py bugs --id 12345678
+python main.py bugs --keyword "memory leak" --days-open 30
+python main.py ask "What NVBugs are assigned to me in NVDRV?"
 
 # Generate and save a weekly status report to Obsidian
 python main.py weekly-report
@@ -143,6 +151,10 @@ GITLAB_TOKEN=glpat-...
 # Slack (user token recommended for full access including search)
 SLACK_TOKEN=xoxp-...
 SLACK_CHANNEL_IDS=C01234ABCD,C05678EFGH   # optional
+
+# NVBugs (optional)
+NVBUGS_API_TOKEN=...
+NVBUGS_API_URL=https://nvbugs.example.com   # optional, has default
 ```
 
 ### 3. Run
