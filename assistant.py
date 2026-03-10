@@ -16,6 +16,7 @@ from connectors.github import GitHubConnector
 from connectors.gitlab import GitLabConnector
 from connectors.slack import SlackConnector
 from connectors.outlook import OutlookConnector
+from connectors.nvbugs import NVBugsConnector
 
 MODEL = "claude-sonnet-4-6"
 
@@ -29,9 +30,10 @@ You have access to data from seven sources:
 5. **GitLab** — merge requests, review assignments, and issues
 6. **Slack** — channel messages, direct messages, and mentions
 7. **Outlook** — email inbox, unread messages, and email search
+8. **NVBugs** — NVIDIA internal bug tracker (bugs, components, priorities, dispositions)
 
 You can also write back to these sources: create Jira issues/comments, transition tickets, \
-create/update Confluence pages, write Obsidian notes, and generate structured documents.
+create/update Confluence pages, write Obsidian notes, add NVBugs comments, and generate structured documents.
 
 Your job is to help the user manage their TPM responsibilities by synthesizing information \
 across all sources.
@@ -45,6 +47,7 @@ Guidelines:
 - When referencing a GitLab MR/issue, include the project, iid, and URL.
 - When referencing a Slack message, include the channel name, user, and timestamp.
 - When referencing an Outlook email, include the subject, sender, and received date.
+- When referencing an NVBug, always include the bug ID, synopsis, priority, and disposition.
 - If data is missing or a source returned no results, say so explicitly rather than making things up.
 - Cross-reference across sources when relevant.
 - Today's date context may be provided — use it when reasoning about deadlines and recency.
@@ -122,6 +125,7 @@ class Assistant:
         self.gitlab: GitLabConnector | None = None
         self.slack: SlackConnector | None = None
         self.outlook: OutlookConnector | None = None
+        self.nvbugs: NVBugsConnector | None = None
 
         if config.jira_enabled:
             self.jira = JiraConnector(
@@ -160,6 +164,11 @@ class Assistant:
             self.outlook = OutlookConnector(
                 tenant_id=config.outlook_tenant_id,
                 client_id=config.outlook_client_id,
+            )
+        if config.nvbugs_enabled:
+            self.nvbugs = NVBugsConnector(
+                token=config.nvbugs_api_token,
+                base_url=config.nvbugs_base_url,
             )
 
     # -------------------------------------------------------------------------
@@ -222,6 +231,47 @@ class Assistant:
             print(self._format_emails(emails, label=label))
         except Exception as e:
             print(f"Error fetching emails: {e}")
+
+    def bugs(
+        self,
+        module: str = "",
+        assigned_to: str = "",
+        bug_id: int = 0,
+        keyword: str = "",
+        days_open: int = 0,
+    ) -> None:
+        """Fetch and display NVBugs filtered by various criteria."""
+        if not self.nvbugs:
+            print("Error: NVBugs is not configured. Set NVBUGS_API_TOKEN in .env.")
+            return
+        try:
+            if bug_id:
+                bug = self.nvbugs.get_bug(bug_id)
+                bugs_list = [bug] if bug else []
+                label = f"NVBug #{bug_id}"
+            elif module and days_open:
+                bugs_list = self.nvbugs.search_bugs(
+                    filters=[
+                        {"FieldName": "ModuleName", "FieldValue": module},
+                        {"FieldName": "DaysOpen", "FieldValue": str(days_open)},
+                    ]
+                )
+                label = f"NVBugs — module '{module}', {days_open} days open"
+            elif module:
+                bugs_list = self.nvbugs.search_by_module(module)
+                label = f"NVBugs — module '{module}'"
+            elif assigned_to:
+                bugs_list = self.nvbugs.get_assigned_bugs(assigned_to)
+                label = f"NVBugs assigned to {assigned_to}"
+            elif keyword:
+                bugs_list = self.nvbugs.search_by_keyword(keyword)
+                label = f"NVBugs matching '{keyword}'"
+            else:
+                print("Error: provide at least one of --module, --assigned-to, --id, or --keyword.")
+                return
+            print(self._format_nvbugs(bugs_list, label=label))
+        except Exception as e:
+            print(f"Error fetching NVBugs: {e}")
 
     def weekly_report(self) -> None:
         """Generate a weekly status report and save it as an Obsidian note."""
@@ -713,6 +763,8 @@ class Assistant:
             sections.append(self._fetch_slack_context(query=question))
         if self.outlook:
             sections.append(self._fetch_outlook_context(query=question))
+        if self.nvbugs:
+            sections.append(self._fetch_nvbugs_context(query=question))
         if not sections:
             return "No data sources are configured."
         return "\n\n".join(sections)
@@ -736,6 +788,8 @@ class Assistant:
             sections.append(self._fetch_slack_briefing_context())
         if self.outlook:
             sections.append(self._fetch_outlook_briefing_context())
+        if self.nvbugs:
+            sections.append(self._fetch_nvbugs_briefing_context())
         if not sections:
             return "No data sources are configured."
         return "\n\n".join(sections)
@@ -913,6 +967,23 @@ class Assistant:
 
         return "\n\n".join(parts) if parts else "[Slack] No data available."
 
+    def _fetch_nvbugs_context(self, query: str) -> str:
+        try:
+            bugs = self.nvbugs.search_by_keyword(query, limit=20)  # type: ignore[union-attr]
+            return self._format_nvbugs(bugs, label=f"NVBugs matching '{query}'")
+        except Exception as e:
+            return f"[NVBugs] Error fetching data: {e}"
+
+    def _fetch_nvbugs_briefing_context(self) -> str:
+        try:
+            bugs = self.nvbugs.search_bugs(  # type: ignore[union-attr]
+                filters=[{"FieldName": "Status", "FieldValue": "Open"}],
+                limit=20,
+            )
+            return self._format_nvbugs(bugs, label="Open NVBugs")
+        except Exception as e:
+            return f"[NVBugs] Error fetching data: {e}"
+
     # -------------------------------------------------------------------------
     # Formatting helpers
     # -------------------------------------------------------------------------
@@ -1003,6 +1074,22 @@ class Assistant:
                 f"- **{email.get('subject', '(no subject)')}**{read_flag}\n"
                 f"  From: {sender} <{email.get('from_email', '')}> | Received: {received}\n"
                 + (f"  Preview: {preview[:300]}\n" if preview else "")
+            )
+        return "\n".join(lines)
+
+    def _format_nvbugs(self, bugs: list[dict], label: str = "NVBugs") -> str:
+        if not bugs:
+            return f"[NVBugs] {label}: No bugs found."
+        lines = [f"## {label} ({len(bugs)} bugs)\n"]
+        for bug in bugs:
+            lines.append(
+                f"- **Bug #{bug['id']}** [{bug['status']}] {bug['synopsis']}\n"
+                f"  Module: {bug['module']} | Priority: {bug['priority']} | "
+                f"Severity: {bug['severity']} | Disposition: {bug['disposition']}\n"
+                f"  Assigned: {bug['assigned_to']} | Submitted: {bug['submitted']} | "
+                f"Days Open: {bug['days_open']}\n"
+                + (f"  OS: {bug['os']}\n" if bug.get("os") else "")
+                + (f"  Version: {bug['version']}\n" if bug.get("version") else "")
             )
         return "\n".join(lines)
 

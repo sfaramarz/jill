@@ -87,6 +87,38 @@ def emails(ctx, unread, query):
     assistant.emails(unread_only=unread, search_query=query)
 
 
+@cli.command()
+@click.option("--module", default="", metavar="MODULE", help="Filter by component/module name (e.g. FrameView).")
+@click.option("--assigned-to", default="", metavar="USER", help="Filter by assigned engineer username.")
+@click.option("--id", "bug_id", default=0, type=int, metavar="ID", help="Fetch a single bug by ID.")
+@click.option("--keyword", default="", metavar="KEYWORD", help="Search bugs by synopsis keyword.")
+@click.option("--days-open", default=0, type=int, metavar="N", help="Filter by exact number of days open.")
+@click.pass_context
+def bugs(ctx, module, assigned_to, bug_id, keyword, days_open):
+    """Search or fetch NVBugs.
+
+    Examples:
+
+      jill bugs --module FrameView
+
+      jill bugs --module FrameView --days-open 5
+
+      jill bugs --assigned-to sfaramarz
+
+      jill bugs --id 5858213
+
+      jill bugs --keyword "overlay crash"
+    """
+    assistant: Assistant = ctx.obj["assistant"]
+    assistant.bugs(
+        module=module,
+        assigned_to=assigned_to,
+        bug_id=bug_id,
+        keyword=keyword,
+        days_open=days_open,
+    )
+
+
 @cli.command("weekly-report")
 @click.pass_context
 def weekly_report(ctx):

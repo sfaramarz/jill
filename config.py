@@ -43,6 +43,10 @@ class Config:
     outlook_tenant_id: str = ""
     outlook_client_id: str = ""
 
+    # NVBugs
+    nvbugs_api_token: str = ""
+    nvbugs_base_url: str = "https://prod.api.nvidia.com/int/nvbugs"
+
     # Derived flags for graceful fallback
     jira_enabled: bool = True
     confluence_enabled: bool = True
@@ -51,6 +55,7 @@ class Config:
     gitlab_enabled: bool = False
     slack_enabled: bool = False
     outlook_enabled: bool = False
+    nvbugs_enabled: bool = False
 
 
 def load_config() -> Config:
@@ -136,6 +141,13 @@ def load_config() -> Config:
             "OUTLOOK_CLIENT_ID": outlook_client_id,
         })
 
+    # NVBugs
+    nvbugs_api_token = os.getenv("NVBUGS_API_TOKEN", "").strip()
+    nvbugs_base_url = os.getenv("NVBUGS_API_URL", "https://prod.api.nvidia.com/int/nvbugs").strip()
+    nvbugs_enabled = bool(nvbugs_api_token)
+    if not nvbugs_enabled:
+        _warn_missing("NVBugs", ["NVBUGS_API_TOKEN"], {"NVBUGS_API_TOKEN": nvbugs_api_token})
+
     return Config(
         anthropic_api_key=api_key,
         jira_base_url=jira_url,
@@ -155,6 +167,8 @@ def load_config() -> Config:
         slack_channel_ids=slack_channel_ids,
         outlook_tenant_id=outlook_tenant_id,
         outlook_client_id=outlook_client_id,
+        nvbugs_api_token=nvbugs_api_token,
+        nvbugs_base_url=nvbugs_base_url,
         jira_enabled=jira_enabled,
         confluence_enabled=confluence_enabled,
         obsidian_enabled=obsidian_enabled,
@@ -162,6 +176,7 @@ def load_config() -> Config:
         gitlab_enabled=gitlab_enabled,
         slack_enabled=slack_enabled,
         outlook_enabled=outlook_enabled,
+        nvbugs_enabled=nvbugs_enabled,
     )
 
 
