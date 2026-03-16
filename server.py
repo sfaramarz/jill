@@ -454,6 +454,51 @@ def outlook_search_emails(query: str) -> str:
         return f"Outlook error: {e}"
 
 
+@mcp.tool()
+def outlook_update_draft(
+    message_id: str,
+    subject: str = "",
+    body: str = "",
+    body_type: str = "HTML",
+) -> str:
+    """Update the subject and/or body of an Outlook draft.
+
+    Args:
+        message_id: The Graph message ID of the draft (get it from outlook_recent_emails or outlook_search_emails).
+        subject:    New subject line. Leave blank to keep existing.
+        body:       New body content. Leave blank to keep existing.
+        body_type:  "HTML" or "Text" (default: "HTML").
+    """
+    if not outlook:
+        return "Outlook is not configured. Set OUTLOOK_TENANT_ID and OUTLOOK_CLIENT_ID in .env"
+    try:
+        result = outlook.update_draft(
+            message_id,
+            subject=subject or None,
+            body=body or None,
+            body_type=body_type,
+        )
+        return f"Draft updated successfully.\n  ID: {result['id']}\n  Subject: {result['subject']}"
+    except Exception as e:
+        return f"Outlook error: {e}"
+
+
+@mcp.tool()
+def outlook_send_draft(message_id: str) -> str:
+    """Send an existing Outlook draft.
+
+    Args:
+        message_id: The Graph message ID of the draft to send.
+    """
+    if not outlook:
+        return "Outlook is not configured."
+    try:
+        outlook.send_draft(message_id)
+        return f"Draft {message_id} sent successfully."
+    except Exception as e:
+        return f"Outlook error: {e}"
+
+
 # ---------------------------------------------------------------------------
 # NVBugs tools
 # ---------------------------------------------------------------------------

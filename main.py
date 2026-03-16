@@ -119,6 +119,34 @@ def bugs(ctx, module, assigned_to, bug_id, keyword, days_open):
     )
 
 
+@cli.command("team-standup")
+@click.pass_context
+def team_standup(ctx):
+    """Generate a standup summary for every team member.
+
+    Shows each developer's open Jira tickets, GitHub PRs, and GitLab MRs.
+    Flags stale items with no recent activity.
+
+    Requires TEAM_MEMBERS in your .env:
+      TEAM_MEMBERS=Alice:alice:alice-gh:alice-gl;Bob:bob:bob-gh:bob-gl
+    """
+    assistant: Assistant = ctx.obj["assistant"]
+    assistant.team_standup()
+
+
+@cli.command("team-workload")
+@click.pass_context
+def team_workload(ctx):
+    """Show workload distribution across the team and flag imbalances.
+
+    Counts open Jira tickets, GitHub PRs, and GitLab MRs per developer
+    and asks Claude to recommend rebalancing.
+    """
+    assistant: Assistant = ctx.obj["assistant"]
+    assistant.team_workload()
+
+
+
 @cli.command("weekly-report")
 @click.pass_context
 def weekly_report(ctx):
@@ -166,7 +194,74 @@ def create(ctx, type, project, topic):
     assistant.create_document(doc_type=type, project=project, topic=topic)
 
 
-@cli.command("plc-doc")
+@cli.command("plc")
+@click.option("--program", required=True, metavar="NAME",
+              help="Program name (e.g. 'Widget v2', 'Rendering Engine').")
+@click.option("--type", "doc_type", required=True,
+              type=click.Choice(["spp", "srd", "sadd"], case_sensitive=False),
+              help="Document type: spp | srd | sadd")
+@click.option("--space", required=True, metavar="SPACE_KEY",
+              help="Confluence space key for the new page (e.g. LightspeedStudios, NVDRV).")
+@click.option("--parent", "parent_id", default=None, metavar="PAGE_ID",
+              help="Optional parent page ID to nest the new page under.")
+@click.option("--jira-project", default=None, metavar="PROJECT_KEY",
+              help="Jira project key to fetch open issues from.")
+@click.option("--page", "confluence_page_refs", multiple=True, metavar="URL_OR_ID",
+              help="Confluence page URL or ID to include as context. Repeatable.")
+@click.option("--obsidian", "obsidian_search", multiple=True, metavar="TERM",
+              help="Obsidian vault search term. Repeatable.")
+@click.option("--meeting", "meeting_notes_refs", multiple=True, metavar="REF",
+              help=(
+                  "Meeting notes reference. Formats: "
+                  "<confluence_url_or_id>, obsidian:<term>, text:<raw_text>. Repeatable."
+              ))
+@click.option("--context", "user_context", default=None, metavar="TEXT",
+              help="Free-form context text to pass to Claude.")
+@click.pass_context
+def plc(ctx, program, doc_type, space, parent_id, jira_project,
+        confluence_page_refs, obsidian_search, meeting_notes_refs, user_context):
+    """Create a PLC document from an official NVIDIA Confluence template.
+
+    Uses fixed templates — no need to supply a template URL.
+
+    \b
+    Document types and their templates:
+      spp   Software Project Plan
+      srd   Software Requirements Document
+      sadd  Software Architecture & Design Document
+
+    \b
+    Page title is derived automatically:
+      spp   → <Program> Software Project Plan
+      srd   → <Program> Requirement Assessment and Documentation
+      sadd  → <Program> Design Assessment and Documentation
+
+    \b
+    Examples:
+
+      jill plc --program "Widget v2" --type spp --space LS
+
+      jill plc --program "Rendering Engine" --type srd --space NVDRV \\
+        --parent 987654 --jira-project RENDER \\
+        --page https://nvidia.atlassian.net/wiki/pages/111111 \\
+        --obsidian "rendering roadmap" \\
+        --meeting "text:Agreed on microservice architecture"
+    """
+    assistant: Assistant = ctx.obj["assistant"]
+    assistant.create_plc_skill(
+        program=program,
+        doc_type=doc_type,
+        space=space,
+        parent_id=parent_id,
+        jira_project=jira_project,
+        confluence_page_refs=list(confluence_page_refs),
+        obsidian_search=list(obsidian_search),
+        meeting_notes_refs=list(meeting_notes_refs),
+        user_context=user_context,
+    )
+
+
+@cli.command("plc-docs-generator")
 @click.option("--template", "template_ref", required=True, metavar="URL_OR_ID",
               help="Confluence page URL or ID to use as the PLC template.")
 @click.option("--title", required=True, metavar="TITLE",
@@ -189,15 +284,15 @@ def create(ctx, type, project, topic):
 @click.option("--context", "user_context", default=None, metavar="TEXT",
               help="Free-form context text to pass to Claude.")
 @click.pass_context
-def plc_doc(ctx, template_ref, title, space, output_parent_id, jira_project,
-            confluence_page_refs, obsidian_search, meeting_notes_refs, user_context):
+def plc_docs_generator(ctx, template_ref, title, space, output_parent_id, jira_project,
+                       confluence_page_refs, obsidian_search, meeting_notes_refs, user_context):
     """Create a populated PLC document from a Confluence template.
 
     Examples:
 
-      jill plc-doc --template 123456789 --title "Blackwell GPU PLC" --space NVDRV
+      jill plc-docs-generator --template 123456789 --title "Blackwell GPU PLC" --space NVDRV
 
-      jill plc-doc \\
+      jill plc-docs-generator \\
         --template https://confluence.nvidia.com/pages/123456789 \\
         --title "RTX 5090 PLC Q2 2026" --space NVDRV --parent 987654321 \\
         --jira-project NVDRV \\

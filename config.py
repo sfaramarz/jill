@@ -47,6 +47,10 @@ class Config:
     nvbugs_api_token: str = ""
     nvbugs_base_url: str = "https://prod.api.nvidia.com/int/nvbugs"
 
+    # Team members — for team management commands
+    # Each entry: {"name": str, "jira": str, "github": str, "gitlab": str}
+    team_members: list = field(default_factory=list)
+
     # Derived flags for graceful fallback
     jira_enabled: bool = True
     confluence_enabled: bool = True
@@ -148,6 +152,23 @@ def load_config() -> Config:
     if not nvbugs_enabled:
         _warn_missing("NVBugs", ["NVBUGS_API_TOKEN"], {"NVBUGS_API_TOKEN": nvbugs_api_token})
 
+    # Team members
+    # Format: "Name:jira_user:github_user:gitlab_user" per member, semicolon-separated
+    # Example: "Alice:alice:alice-gh:alice-gl;Bob:bob:bob-gh:bob-gl"
+    # github_user and gitlab_user are optional — fall back to jira_user if omitted
+    team_members: list[dict] = []
+    raw_team = os.getenv("TEAM_MEMBERS", "").strip()
+    if raw_team:
+        for entry in raw_team.split(";"):
+            parts = [p.strip() for p in entry.split(":")]
+            if len(parts) >= 2:
+                team_members.append({
+                    "name": parts[0],
+                    "jira": parts[1],
+                    "github": parts[2] if len(parts) > 2 and parts[2] else parts[1],
+                    "gitlab": parts[3] if len(parts) > 3 and parts[3] else parts[1],
+                })
+
     return Config(
         anthropic_api_key=api_key,
         jira_base_url=jira_url,
@@ -169,6 +190,7 @@ def load_config() -> Config:
         outlook_client_id=outlook_client_id,
         nvbugs_api_token=nvbugs_api_token,
         nvbugs_base_url=nvbugs_base_url,
+        team_members=team_members,
         jira_enabled=jira_enabled,
         confluence_enabled=confluence_enabled,
         obsidian_enabled=obsidian_enabled,

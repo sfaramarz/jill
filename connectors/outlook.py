@@ -5,7 +5,7 @@ A local HTTP server captures the OAuth redirect automatically — no codes to co
 Token is cached to ~/.jill_outlook_token.json and auto-refreshed via MSAL cache.
 
 Required Graph API permissions (delegated):
-    Mail.Read, offline_access
+    Mail.ReadWrite, Mail.Send, offline_access
 
 Azure app registration redirect URI required:
     http://localhost  (Mobile and desktop applications platform)
@@ -22,7 +22,7 @@ import msal
 import requests
 
 _GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-_SCOPES = ["Mail.Read", "offline_access"]
+_SCOPES = ["Mail.ReadWrite", "Mail.Send", "offline_access"]
 _TOKEN_CACHE_PATH = Path.home() / ".jill_outlook_token.json"
 
 
@@ -127,6 +127,77 @@ class OutlookConnector:
                 f"Graph API error {resp.status_code}: {resp.text[:300]}"
             )
         return resp.json()
+
+    def _patch(self, path: str, token: str, payload: dict) -> dict:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        resp = requests.patch(f"{_GRAPH_BASE}{path}", headers=headers, json=payload, timeout=15)
+        if not resp.ok:
+            raise RuntimeError(
+                f"Graph API error {resp.status_code}: {resp.text[:300]}"
+            )
+        return resp.json() if resp.content else {}
+
+    def _post(self, path: str, token: str, payload: dict | None = None) -> dict:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        resp = requests.post(
+            f"{_GRAPH_BASE}{path}",
+            headers=headers,
+            json=payload or {},
+            timeout=15,
+        )
+        if not resp.ok:
+            raise RuntimeError(
+                f"Graph API error {resp.status_code}: {resp.text[:300]}"
+            )
+        return resp.json() if resp.content else {}
+
+    # ------------------------------------------------------------------
+    # Write methods
+    # ------------------------------------------------------------------
+
+    def update_draft(
+        self,
+        message_id: str,
+        *,
+        subject: str | None = None,
+        body: str | None = None,
+        body_type: str = "HTML",
+    ) -> dict:
+        """Update a draft message's subject and/or body.
+
+        Args:
+            message_id: Graph message ID of the draft.
+            subject:    New subject line (optional).
+            body:       New body content (optional).
+            body_type:  "HTML" or "Text" (default: "HTML").
+
+        Returns a normalized dict with id and subject of the updated draft.
+        """
+        token = self.authenticate()
+        payload: dict[str, Any] = {}
+        if subject is not None:
+            payload["subject"] = subject
+        if body is not None:
+            payload["body"] = {"contentType": body_type, "content": body}
+        if not payload:
+            raise ValueError("Provide at least subject or body to update.")
+        result = self._patch(f"/me/messages/{message_id}", token, payload)
+        return {"id": result.get("id", message_id), "subject": result.get("subject", "")}
+
+    def send_draft(self, message_id: str) -> None:
+        """Send an existing draft message.
+
+        Args:
+            message_id: Graph message ID of the draft to send.
+        """
+        token = self.authenticate()
+        self._post(f"/me/messages/{message_id}/send", token)
 
     def _parse_email(self, msg: dict) -> dict:
         """Normalize a Graph API message object into a clean dict."""

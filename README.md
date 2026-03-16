@@ -14,7 +14,7 @@ As a TPM I constantly context-switch between Jira tickets, Confluence docs, meet
 
 ### The Stack
 
-- **[Claude](https://www.anthropic.com/claude) (claude-sonnet-4-6)** — the brain. Every query goes to Claude with full context from all your data sources injected into the prompt. Responses stream to the terminal in real time.
+- **[Claude](https://www.anthropic.com/claude) (claude-opus-4-6)** — the brain. Every query goes to Claude with full context from all your data sources injected into the prompt. Responses stream to the terminal in real time.
 - **[Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python)** — used directly for streaming Claude API calls.
 - **[Click](https://click.palletsprojects.com/)** — powers the CLI interface.
 - **[Requests](https://requests.readthedocs.io/)** — used by each connector to call REST APIs.
@@ -95,8 +95,15 @@ python main.py create srd --topic "GPU memory management"
 python main.py create roadmap
 python main.py create checklist --topic "RTX 5090 release"
 
-# Populate a PLC document from a Confluence template
-python main.py plc-doc \
+# Create a PLC document using official NVIDIA templates (SPP / SRD / SADD)
+python main.py plc --program "Widget v2" --type spp --space LS
+python main.py plc --program "Rendering Engine" --type srd --space NVDRV \
+  --parent 987654 --jira-project RENDER \
+  --page https://nvidia.atlassian.net/wiki/pages/111111 \
+  --obsidian "rendering roadmap"
+
+# Populate a PLC document from a custom Confluence template
+python main.py plc-docs-generator \
   --template https://confluence.nvidia.com/pages/123456789 \
   --title "RTX 5090 PLC Q2 2026" \
   --space NVDRV \

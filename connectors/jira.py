@@ -93,6 +93,16 @@ class JiraConnector:
         })
         return self._format_issues(data.get("issues", []))
 
+    def get_user_issues(self, username: str, max_results: int = 20) -> list[dict]:
+        """Return open issues assigned to a specific user by username."""
+        jql = f'assignee = "{username}" AND statusCategory != Done ORDER BY updated DESC'
+        data = self._get("/search", params={
+            "jql": jql,
+            "maxResults": max_results,
+            "fields": "summary,status,priority,project,assignee,updated,issuetype",
+        })
+        return self._format_issues(data.get("issues", []))
+
     def get_project_issues(self, project_key: str, max_results: int = 50) -> list[dict]:
         """Return open issues for a Jira project ordered by priority then recency."""
         jql = (

@@ -18,10 +18,10 @@ from connectors.slack import SlackConnector
 from connectors.outlook import OutlookConnector
 from connectors.nvbugs import NVBugsConnector
 
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-opus-4-6"
 
 SYSTEM_PROMPT = """You are Jill, a personal AI assistant for a TPM/Producer at NVIDIA. \
-You have access to data from seven sources:
+You have access to data from eight sources:
 
 1. **Jira** — project management tickets, issues, sprints, and activity
 2. **Confluence** — team wiki pages, documentation, and meeting notes
@@ -35,11 +35,14 @@ You have access to data from seven sources:
 You can also write back to these sources: create Jira issues/comments, transition tickets, \
 create/update Confluence pages, write Obsidian notes, add NVBugs comments, and generate structured documents.
 
-Your job is to help the user manage their TPM responsibilities by synthesizing information \
-across all sources.
+Your job is to help the TPM manage their responsibilities by synthesizing information across all \
+sources — including tracking the work of their developer team to surface blockers, workload \
+imbalances, stale PRs, sprint health, and standup-style summaries per developer.
 
 Guidelines:
 - Be concise and direct. Bullet points are preferred over long paragraphs.
+- When presenting team data, always organize by team member (name first, then their work).
+- Highlight blockers, stale items (no activity > 3 days), and overloaded developers proactively.
 - When referencing a Jira issue, always include the issue key (e.g. PROJ-123) and its URL.
 - When referencing a Confluence page, include its title and URL.
 - When referencing an Obsidian note, include its title and relative path.
@@ -52,6 +55,31 @@ Guidelines:
 - Cross-reference across sources when relevant.
 - Today's date context may be provided — use it when reasoning about deadlines and recency.
 """
+
+# ---------------------------------------------------------------------------
+# PLC skill — fixed Confluence templates and title naming convention
+# ---------------------------------------------------------------------------
+
+_PLC_SKILL_TEMPLATES: dict[str, dict] = {
+    "spp": {
+        "id": "2584970595",
+        "name": "Software Project Plan",
+        "title_fmt": "{program} Software Project Plan",
+        "url": "https://nvidia.atlassian.net/wiki/spaces/RP/pages/2584970595/",
+    },
+    "srd": {
+        "id": "2584970602",
+        "name": "Software Requirements Document",
+        "title_fmt": "{program} Requirement Assessment and Documentation",
+        "url": "https://nvidia.atlassian.net/wiki/spaces/RP/pages/2584970602/",
+    },
+    "sadd": {
+        "id": "2584970600",
+        "name": "Software Architecture & Design Document",
+        "title_fmt": "{program} Design Assessment and Documentation",
+        "url": "https://nvidia.atlassian.net/wiki/spaces/RP/pages/2584970600/",
+    },
+}
 
 # ---------------------------------------------------------------------------
 # Document templates
@@ -273,6 +301,127 @@ class Assistant:
         except Exception as e:
             print(f"Error fetching NVBugs: {e}")
 
+    # -------------------------------------------------------------------------
+    # Team management commands
+    # -------------------------------------------------------------------------
+
+    def team_standup(self) -> None:
+        """Generate a standup summary for every team member."""
+        members = self.config.team_members
+        if not members:
+            print("Error: No team members configured. Add TEAM_MEMBERS to your .env file.\n"
+                  "Format: Name:jira_user:github_user:gitlab_user — semicolon-separated.")
+            return
+
+        today = date.today()
+        print(f"Generating team standup for {today.isoformat()}...\n")
+
+        parts: list[str] = [f"Today is {today.isoformat()}. Generate a **Team Standup Summary**.\n"
+                            "For each team member list: open tickets, open PRs/MRs, and any blockers. "
+                            "Flag items with no recent activity (>3 days) as potentially stale.\n\n"]
+
+        for member in members:
+            name = member["name"]
+            section = [f"### {name}"]
+
+            if self.jira:
+                try:
+                    issues = self.jira.get_user_issues(member["jira"])
+                    section.append(f"**Jira ({len(issues)} open):**\n{self._format_issues_text(issues)}")
+                except Exception as e:
+                    section.append(f"**Jira:** error — {e}")
+
+            if self.github:
+                try:
+                    prs = self.github.get_user_prs(member["github"])
+                    section.append(f"**GitHub PRs ({len(prs)} open):**\n{self._format_items_text(prs)}")
+                except Exception as e:
+                    section.append(f"**GitHub:** error — {e}")
+
+            if self.gitlab:
+                try:
+                    mrs = self.gitlab.get_user_mrs(member["gitlab"])
+                    section.append(f"**GitLab MRs ({len(mrs)} open):**\n{self._format_items_text(mrs)}")
+                except Exception as e:
+                    section.append(f"**GitLab:** error — {e}")
+
+            parts.append("\n".join(section))
+
+        self._stream_response("\n\n".join(parts))
+
+    def team_workload(self) -> None:
+        """Show workload distribution across all team members."""
+        members = self.config.team_members
+        if not members:
+            print("Error: No team members configured. Add TEAM_MEMBERS to your .env file.")
+            return
+
+        print("Fetching team workload...\n")
+        rows: list[str] = []
+
+        for member in members:
+            name = member["name"]
+            jira_count = github_count = gitlab_count = 0
+
+            if self.jira:
+                try:
+                    jira_count = len(self.jira.get_user_issues(member["jira"]))
+                except Exception:
+                    pass
+            if self.github:
+                try:
+                    github_count = len(self.github.get_user_prs(member["github"]))
+                except Exception:
+                    pass
+            if self.gitlab:
+                try:
+                    gitlab_count = len(self.gitlab.get_user_mrs(member["gitlab"]))
+                except Exception:
+                    pass
+
+            rows.append(
+                f"- **{name}**: {jira_count} Jira tickets | "
+                f"{github_count} GitHub PRs | {gitlab_count} GitLab MRs"
+            )
+
+        summary = "\n".join(rows)
+        prompt = (
+            "Here is the current open workload per developer:\n\n"
+            f"{summary}\n\n"
+            "Analyse the distribution: who is overloaded, who has capacity, and what should the "
+            "manager prioritise for rebalancing? Give concrete recommendations."
+        )
+        print(summary)
+        print()
+        self._stream_response(prompt)
+
+    # -------------------------------------------------------------------------
+    # Team formatting helpers
+    # -------------------------------------------------------------------------
+
+    def _format_issues_text(self, issues: list[dict]) -> str:
+        if not issues:
+            return "_None_"
+        lines = []
+        for i in issues[:10]:
+            lines.append(
+                f"  - [{i.get('key', '?')}] {i.get('summary', '')} "
+                f"({i.get('status', '')} / {i.get('priority', '')}) {i.get('url', '')}"
+            )
+        return "\n".join(lines)
+
+    def _format_items_text(self, items: list[dict]) -> str:
+        if not items:
+            return "_None_"
+        lines = []
+        for it in items[:10]:
+            number = it.get("number") or it.get("iid", "?")
+            title = it.get("title", "")
+            updated = it.get("updated_at", "")[:10]
+            url = it.get("url", "")
+            lines.append(f"  - #{number} {title} (updated {updated}) {url}")
+        return "\n".join(lines)
+
     def weekly_report(self) -> None:
         """Generate a weekly status report and save it as an Obsidian note."""
         today = date.today()
@@ -455,6 +604,55 @@ class Assistant:
             print(f"Error: Could not create Confluence page: {e}", file=sys.stderr)
             print("--- Generated HTML (for manual recovery) ---", file=sys.stderr)
             print(html_body, file=sys.stderr)
+
+    def create_plc_skill(
+        self,
+        program: str,
+        doc_type: str,
+        space: str,
+        parent_id: str | None = None,
+        jira_project: str | None = None,
+        confluence_page_refs: list[str] | None = None,
+        obsidian_search: list[str] | None = None,
+        meeting_notes_refs: list[str] | None = None,
+        user_context: str | None = None,
+    ) -> None:
+        """Create a PLC document using the fixed official NVIDIA Confluence templates.
+
+        Supported doc_type values: spp | srd | sadd
+        Title is derived automatically from program name + doc type.
+        """
+        if not self.confluence:
+            print("Error: Confluence is not configured. Set CONFLUENCE_* env vars.", file=sys.stderr)
+            return
+
+        doc_type = doc_type.lower()
+        if doc_type not in _PLC_SKILL_TEMPLATES:
+            valid = ", ".join(_PLC_SKILL_TEMPLATES)
+            print(f"Error: unknown PLC type '{doc_type}'. Valid types: {valid}", file=sys.stderr)
+            return
+
+        tmpl = _PLC_SKILL_TEMPLATES[doc_type]
+        template_id = tmpl["id"]
+        output_title = tmpl["title_fmt"].format(program=program)
+
+        print(f"PLC type    : {doc_type.upper()} — {tmpl['name']}")
+        print(f"Template ID : {template_id}")
+        print(f"Page title  : {output_title}")
+        print(f"Space       : {space}")
+        print()
+
+        self.create_plc_document(
+            template_ref=template_id,
+            output_title=output_title,
+            output_space=space,
+            output_parent_id=parent_id,
+            jira_project=jira_project,
+            confluence_page_refs=confluence_page_refs or [],
+            obsidian_search=obsidian_search or [],
+            meeting_notes_refs=meeting_notes_refs or [],
+            user_context=user_context,
+        )
 
     def _resolve_confluence_ref(self, ref: str) -> str:
         """Resolve a URL or bare numeric ID to a Confluence page ID string."""

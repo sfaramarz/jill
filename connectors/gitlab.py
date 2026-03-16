@@ -62,6 +62,17 @@ class GitLabConnector:
         })
         return self._format_issues(data)
 
+    def get_user_mrs(self, username: str, limit: int = 20) -> list[dict]:
+        """Return open MRs authored by a specific GitLab username."""
+        data = self._get("/merge_requests", params={
+            "author_username": username,
+            "state": "opened",
+            "per_page": limit,
+            "order_by": "updated_at",
+            "sort": "desc",
+        })
+        return self._format_mrs(data)
+
     def search(self, query: str, limit: int = 20) -> list[dict]:
         """Search issues and MRs by keyword."""
         issues = self._get("/issues", params={

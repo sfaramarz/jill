@@ -58,6 +58,14 @@ class GitHubConnector:
         data = self._get("/search/issues", params={"q": q, "per_page": limit, "sort": "updated"})
         return self._format_issues(data.get("items", []), kind="Issue")
 
+    def get_user_prs(self, username: str, limit: int = 20) -> list[dict]:
+        """Return open PRs authored by a specific GitHub username."""
+        q = f"is:pr is:open author:{username}"
+        if self.org:
+            q += f" org:{self.org}"
+        data = self._get("/search/issues", params={"q": q, "per_page": limit, "sort": "updated"})
+        return self._format_issues(data.get("items", []), kind="PR")
+
     def search(self, query: str, limit: int = 20) -> list[dict]:
         """Full-text search across issues and PRs."""
         q = query
